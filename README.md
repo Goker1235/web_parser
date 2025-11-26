@@ -4,6 +4,7 @@
 - https://rukodelie-online.ru
 - https://rostov.store123.ru
 - https://www.mvideo.ru
+- https://велоас.рф
 
 Поля, которые парсятся.
 
