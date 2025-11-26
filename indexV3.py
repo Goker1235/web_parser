@@ -19,8 +19,8 @@ from urllib.parse import urlparse
 from selenium.common.exceptions import StaleElementReferenceException # Импорт ошибки
 
 # === НАСТРОЙКИ ===================================
-BASE_URL_FULL = "https://www.mvideo.ru/smartfony-i-svyaz-10/smartfony-205/f/brand=honor/tolko-v-nalichii=da"
-PAGINATION_PARAM = "page=" 
+BASE_URL_FULL = "https://велоас.рф/katalog/rasprodazha?item_manufacturer%5B%5D=14&item_manufacturer%5B%5D=338&item_manufacturer%5B%5D=97&item_manufacturer%5B%5D=88"
+PAGINATION_PARAM = "st=" 
 MAX_PAGES_TO_PARSE = 10000 
 OUTPUT_FILE = "flats_stealthV3.json"
 MAX_WORKERS = 6 # <-- КОЛИЧЕСТВО ОДНОВРЕМЕННО ОБРАБАТЫВАЕМЫХ ТОВАРОВ
@@ -129,8 +129,10 @@ def find_product_container(driver):
         "a.product-title__text",
         "a.product-title__text",
         "[class*='title']",
-        "[class*='name']" 
+        "[class*='name']",
+        "div.product-item-title a"
     ]
+
     price_selectors = [
         "span.price",
         "div.price",
@@ -138,11 +140,12 @@ def find_product_container(driver):
         "div.price_matrix_block .price span",
         "div.price span.price__sale-value",
         "span.price__main-value",
-        "[class*='price']"
+        "[class*='price']",
+        "div.product-item-price"
     ]
 
     # 1. Сначала находим все потенциальные контейнеры
-    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div, section, mvid-product-cards-list-container")
+    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div, section, mvid-product-cards-list-container, div.ro")
     
     for c in containers:
         try:
@@ -153,16 +156,16 @@ def find_product_container(driver):
             if len(children) < 2:
                 continue
                 
-            # проверяем, есть ли у большинства детей ссылка и цена
+            # проверяем, есть ли у большинства детей ссылка
             matches = 0
             for child in children:
                 # Внутренние find_elements также могут вызвать StaleElement, 
                 # поэтому используем вложенный try/except.
                 try:
                     has_name = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in name_selectors)
-                    # has_price = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors)
+                    has_price = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors)
                     
-                    if has_name: # and has_price:
+                    if has_name and has_price:
                         matches += 1
                 except StaleElementReferenceException:
                     # Пропускаем только этот дочерний элемент
@@ -194,8 +197,8 @@ def find_product_container(driver):
             for card in deep_cards:
                 try:
                     has_name = any(card.find_elements(By.CSS_SELECTOR, sel) for sel in name_selectors)
-                    # has_price = any(card.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors)
-                    if has_name: #and has_price:
+                    has_price = any(card.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors)
+                    if has_name and has_price:
                         valid_cards.append(card)
                 except:
                     continue
@@ -226,19 +229,20 @@ def parse_cards(driver):
         try:
             # Универсальный поиск названия
             name_el = None
-            for sel in ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span", "a.product-card__title", "a.product-title__text", "[class*='title']", "[class*='name']"]:
+            for sel in ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span", "a.product-card__title", "a.product-title__text", "div.product-item-title a"]:
                 els = card.find_elements(By.CSS_SELECTOR, sel)
                 if els:
                     name_el = els[0]
                     break
             
+            print(name_el)
             if not name_el:
                 continue
-
+            # print(1111111)    
             # Универсальный поиск URL
             url = name_el.find_element(By.XPATH, "./ancestor::a[@href]").get_attribute("href") if name_el.tag_name != "a" else name_el.get_attribute("href")
             name = name_el.text.strip()
-            
+            # print(url)
             if url:
                     # Возвращаем только URL и Название (для логгирования/проверки дубликатов)
                     result.append({"url": url, "name": name})
@@ -308,7 +312,8 @@ def parse_product_details(driver, url):
             "div.product-main-info span.price",
             "div.item_main_info .price",
             "div.product-price",
-            "div.price"
+            "div.price",
+            "span.new-price"
         ]
 
         js_code = f"""
@@ -360,7 +365,7 @@ def parse_product_details(driver, url):
                     if (container) {{
 
                         // ищем старую цену (.old_price или sale-value)
-                        let oldSpan = container.querySelector(".old_price span, .price__sale-value");
+                        let oldSpan = container.querySelector(".old_price span, .price__sale-value, span.old-price");
                         if (oldSpan) {{
                             let oldText = oldSpan.innerText.replace(/\\D/g, "");
                             if (oldText) result.oldPrice = oldText;
@@ -406,6 +411,7 @@ def parse_product_details(driver, url):
             "div.tab-pane.active div.description",
             "div.description-section div.content",
             "div.seo-text",
+            "div.body-product-item"
         ]
 
         try:
@@ -465,7 +471,9 @@ def parse_product_details(driver, url):
             "p.product-sold-out-text",
             "p.product-unavailable-text",
             "div.product-not-available",
-            "mvid-product-details-card p"
+            "mvid-product-details-card p",
+
+            "div.block_btn-product button"
         ]
         
         js_code = f"""
@@ -481,7 +489,8 @@ def parse_product_details(driver, url):
             "нет доступных предложений",
             "временно отсутствует",
             "временно недоступен",
-            "нет товара"
+            "нет товара",
+            "Подобрать аналог"
         ];
 
         for (let sel of selectors) {{
@@ -515,44 +524,17 @@ def parse_product_details(driver, url):
 
         return available;
         """
-        # рабочая функция
-        f"""
-        let available = false;
-        let selectors = {availability_selectors};
-        
-        for (let sel of selectors) {{
-            try {{
-                let elements = document.querySelectorAll(sel);
-                for (let el of elements) {{
-                    let text = el.innerText || el.textContent || "";
-                    text = text.trim().toLowerCase();
-        
-                    // если содержит "в наличии" или "есть"
-                    if (text.includes("в наличии") || text.includes("есть")) {{
-                        available = true;
-                        break;
-                    }}
-        
-                    // если текст содержит цифры
-                    if (/[0-9]/.test(text)) {{
-                        available = true;
-                        break;
-                    }}
-                }}
-                if (available) break;
-            }} catch(e) {{
-                continue;
-            }}
-        }}
-        
-        return available;
-        """
         
         # выполнение JS через Selenium
         item["available"] = driver.execute_script(js_code)
 
         # --- 5. Поиск Картинки (УЛУЧШЕННАЯ УНИВЕРСАЛЬНАЯ ЛОГИКА) ---
         image_selectors = [
+            "div.slick-track img",
+            "div.slick-list img",
+            "div.slider-item img",
+            "ul.slick-slider img",
+            "div.page_product-image img",
             "ul.slick-slider img.mirfoto",
             "div.multiphoto a.photo-preview img",
             "div.main_img img",
@@ -603,7 +585,8 @@ def parse_product_details(driver, url):
         characteristics_selectors = [
             "table.props_list.nbg tr[itemprop='additionalProperty']",  # новая разметка
             "div.product-characteristics__spec",  # старая разметка
-            "mvid-key-characteristics .characteristics-item" 
+            "mvid-key-characteristics .characteristics-item",
+            "div.product-item-char ul"
         ]
 
         js_characteristics = f"""
@@ -727,7 +710,7 @@ def main():
             time.sleep(3.0)
             
             items = parse_cards(catalog_driver)
-            
+            # print('items', items)
             if not items:
                 print(f"На странице {page_num} не найдено товаров. Остановка.")
                 break
@@ -739,6 +722,7 @@ def main():
                     seen_product_urls.add(product_url)
                     new_urls_on_page.append(product_url)
                     
+            # print('new_urls_on_page', new_urls_on_page)
             if not new_urls_on_page:
                 print("Найдено только дубликаты. Остановка сбора ссылок.")
                 break
