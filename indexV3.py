@@ -19,8 +19,8 @@ from urllib.parse import urlparse
 from selenium.common.exceptions import StaleElementReferenceException # Импорт ошибки
 
 # === НАСТРОЙКИ ===================================
-BASE_URL_FULL = "https://велоас.рф/katalog/rasprodazha?item_manufacturer%5B%5D=14&item_manufacturer%5B%5D=338&item_manufacturer%5B%5D=97&item_manufacturer%5B%5D=88"
-PAGINATION_PARAM = "st=" 
+BASE_URL_FULL = "https://www.citilink.ru/catalog/noutbuki/MSI--4k-uhd-msi/?ref=mainpage_popular"
+PAGINATION_PARAM = "page=" 
 MAX_PAGES_TO_PARSE = 10000 
 OUTPUT_FILE = "flats_stealthV3.json"
 MAX_WORKERS = 6 # <-- КОЛИЧЕСТВО ОДНОВРЕМЕННО ОБРАБАТЫВАЕМЫХ ТОВАРОВ
@@ -130,7 +130,8 @@ def find_product_container(driver):
         "a.product-title__text",
         "[class*='title']",
         "[class*='name']",
-        "div.product-item-title a"
+        "div.product-item-title a",
+        'a[data-meta-name="Snippet__title"]'
     ]
 
     price_selectors = [
@@ -141,11 +142,12 @@ def find_product_container(driver):
         "div.price span.price__sale-value",
         "span.price__main-value",
         "[class*='price']",
-        "div.product-item-price"
+        "div.product-item-price",
+        'span[data-meta-name="Snippet__price"]'
     ]
 
     # 1. Сначала находим все потенциальные контейнеры
-    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div, section, mvid-product-cards-list-container, div.ro")
+    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div, section, mvid-product-cards-list-container, div.row, div:has([data-meta-name='ProductHorizontalSnippet'])")
     
     for c in containers:
         try:
@@ -229,13 +231,13 @@ def parse_cards(driver):
         try:
             # Универсальный поиск названия
             name_el = None
-            for sel in ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span", "a.product-card__title", "a.product-title__text", "div.product-item-title a"]:
+            for sel in ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span", "a.product-card__title", "a.product-title__text", "div.product-item-title a", 'a[data-meta-name="Snippet__title"]']:
                 els = card.find_elements(By.CSS_SELECTOR, sel)
                 if els:
                     name_el = els[0]
                     break
             
-            print(name_el)
+            # print(name_el)
             if not name_el:
                 continue
             # print(1111111)    
@@ -313,7 +315,9 @@ def parse_product_details(driver, url):
             "div.item_main_info .price",
             "div.product-price",
             "div.price",
-            "span.new-price"
+            "span.new-price",
+
+            'div[data-meta-name="PriceBlock__price"] span[data-meta-price] span'
         ]
 
         js_code = f"""
@@ -355,6 +359,23 @@ def parse_product_details(driver, url):
             if (saleVal) {{
                 let t = saleVal.innerText.replace(/\\D/g, "");
                 if (t) result.oldPrice = t;
+            }}
+
+            // === 2.2) Новый сайт: data-meta-price ===
+            let metaPriceSpan = document.querySelector('div[data-meta-name="PriceBlock__price"] span[data-meta-price]');
+            if (metaPriceSpan) {{
+                let raw = metaPriceSpan.getAttribute("data-meta-price");
+                if (raw) {{
+                    let cleaned = raw.replace(/\\D/g, "");
+                    if (cleaned) result.price = cleaned;
+                }}
+            }}
+
+            // === 2.3) Клубная цена → oldPrice ===
+            let clubPriceSpan = document.querySelector('div[data-meta-name="PriceBlock__club-price"] span');
+            if (clubPriceSpan) {{
+                let club = clubPriceSpan.innerText.replace(/\\D/g, "");
+                if (club) result.oldPrice = club;
             }}
 
             // 3) универсальные селекторы fallback
@@ -412,6 +433,8 @@ def parse_product_details(driver, url):
             "div.description-section div.content",
             "div.seo-text",
             "div.body-product-item"
+
+            "div.view-desktop"
         ]
 
         try:
@@ -545,7 +568,8 @@ def parse_product_details(driver, url):
             "div.item_slider.color-controls ul.slides img",
             "div.slides li link[itemprop='image']",
             "div.slides li a.popup_link img",
-            "div.item img"
+            "div.item img",
+            'div[data-meta-name="ImageGallery__thumbs"] div div div img'
         ]
 
         js_images = f"""
@@ -581,12 +605,13 @@ def parse_product_details(driver, url):
 
         item["picture"] = driver.execute_script(js_images)
         
-        # --- 6. Поиск Характеристик (БЕЗ ИЗМЕНЕНИЙ) ---
+        # --- 6. Поиск Характеристик ---
         characteristics_selectors = [
             "table.props_list.nbg tr[itemprop='additionalProperty']",  # новая разметка
             "div.product-characteristics__spec",  # старая разметка
             "mvid-key-characteristics .characteristics-item",
-            "div.product-item-char ul"
+            "div.product-item-char ul",
+            "div[data-meta-name='ProductHeaderContentLayout__second-column'] div div ul li"
         ]
 
         js_characteristics = f"""
@@ -627,6 +652,20 @@ def parse_product_details(driver, url):
                             }}
                         }}
 
+                         // 4) Новая разметка li/span
+                        if (!nameEl || !valueEl) {{
+                            let spans = row.querySelectorAll("span");
+                            if (spans.length >= 2) {{
+                                let nameCandidate = spans[0].innerText.trim().replace(/\\s+/g, " ");;
+                                let valueCandidate = spans[1].innerText.trim().replace(/\\s+/g, " ");;
+
+                                if (nameCandidate && valueCandidate) {{
+                                    characteristics[nameCandidate] = valueCandidate;
+                                    return;
+                                }}
+                            }}
+                        }}
+
                         if (nameEl && valueEl) {{
                             let name = nameEl.innerText.trim().replace(/\\s+/g, " ");
                             let value = valueEl.innerText.trim().replace(/\\s+/g, " ");
@@ -641,39 +680,8 @@ def parse_product_details(driver, url):
 
         return characteristics;
         """
-        
-        # рабочая фукнция
-        f"""
-        let characteristics = {{}};
-        let selectors = {characteristics_selectors};
-
-        selectors.forEach(sel => {{
-            try {{
-                let rows = document.querySelectorAll(sel);
-                rows.forEach(row => {{
-                    try {{
-                        let nameEl = row.querySelector("td.char_name span[itemprop='name']");
-                        let valueEl = row.querySelector("td.char_value span[itemprop='value']");
-
-                        if (!nameEl || !valueEl) {{
-                            nameEl = row.querySelector(".product-characteristics__spec-title-content");
-                            valueEl = row.querySelector(".product-characteristics__spec-value");
-                        }}
-
-                        if (nameEl && valueEl) {{
-                            let name = nameEl.innerText.trim().replace(/\\n/g, " ");
-                            let value = valueEl.innerText.trim().replace(/\\n/g, " ");
-                            if (name && value) {{
-                                characteristics[name] = value;
-                            }}
-                        }}
-                    }} catch(e) {{}}
-                }});
-            }} catch(e) {{}}
-        }});
-
-        return characteristics;
-        """
+        # print(driver.execute_script(js_characteristics))
+  
 
         item["characteristics"] = driver.execute_script(js_characteristics)
 
