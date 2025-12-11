@@ -5,6 +5,7 @@
 - https://rostov.store123.ru
 - https://www.mvideo.ru
 - https://велоас.рф
+- https://www.citilink.ru
 
 Поля, которые парсятся.
 
