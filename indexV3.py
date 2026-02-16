@@ -19,8 +19,8 @@ from urllib.parse import urlparse
 from selenium.common.exceptions import StaleElementReferenceException # Импорт ошибки
 
 # === НАСТРОЙКИ ===================================
-BASE_URL_FULL = "https://www.citilink.ru/catalog/noutbuki/MSI--4k-uhd-msi/?ref=mainpage_popular"
-PAGINATION_PARAM = "page=" 
+BASE_URL_FULL = "https://rostov.cian.ru/newobjects/list?currency=2&deal_type=sale&engine_version=2&maxprice=50000000&offer_type=newobject&region=4606&room3=1"
+PAGINATION_PARAM = "p=" 
 MAX_PAGES_TO_PARSE = 10000 
 OUTPUT_FILE = "flats_stealthV3.json"
 MAX_WORKERS = 6 # <-- КОЛИЧЕСТВО ОДНОВРЕМЕННО ОБРАБАТЫВАЕМЫХ ТОВАРОВ
@@ -131,7 +131,9 @@ def find_product_container(driver):
         "[class*='title']",
         "[class*='name']",
         "div.product-item-title a",
-        'a[data-meta-name="Snippet__title"]'
+        'a[data-meta-name="Snippet__title"]',
+
+        'div[data-name="NewbuildingInfo"] a'
     ]
 
     price_selectors = [
@@ -143,12 +145,15 @@ def find_product_container(driver):
         "span.price__main-value",
         "[class*='price']",
         "div.product-item-price",
-        'span[data-meta-name="Snippet__price"]'
+        'span[data-meta-name="Snippet__price"]',
+
+        'div[data-name="Advertises"] span a'
     ]
 
     # 1. Сначала находим все потенциальные контейнеры
-    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div, section, mvid-product-cards-list-container, div.row, div:has([data-meta-name='ProductHorizontalSnippet'])")
+    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div, section, mvid-product-cards-list-container, div.row, div:has([data-meta-name='ProductHorizontalSnippet']), div[data-mark='OffersBody'][data-id='offers_body_container']")
     
+    # print('container', containers)
     for c in containers:
         try:
             # ⚡️ Изменение: Оборачиваем поиск дочерних элементов в try/except
@@ -166,7 +171,10 @@ def find_product_container(driver):
                 try:
                     has_name = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in name_selectors)
                     has_price = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors)
-                    
+
+                    # print('has_name', has_name)
+                    # print('has_price', has_price)
+
                     if has_name and has_price:
                         matches += 1
                 except StaleElementReferenceException:
@@ -222,7 +230,9 @@ def find_product_container(driver):
 def parse_cards(driver):
     """Собирает URL и Название со страницы каталога."""
     container, cards = find_product_container(driver)
+    # print('container', container)
     # print('cards', cards)
+
     if not container:
         return []
 
@@ -231,7 +241,7 @@ def parse_cards(driver):
         try:
             # Универсальный поиск названия
             name_el = None
-            for sel in ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span", "a.product-card__title", "a.product-title__text", "div.product-item-title a", 'a[data-meta-name="Snippet__title"]']:
+            for sel in ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span", "a.product-card__title", "a.product-title__text", "div.product-item-title a", 'a[data-meta-name="Snippet__title"]', 'div[data-name="NewbuildingInfo"] a']:
                 els = card.find_elements(By.CSS_SELECTOR, sel)
                 if els:
                     name_el = els[0]
@@ -706,10 +716,19 @@ def main():
             if page_num == 1:
                 page_url = BASE_URL_FULL
             else:
-                separator = "&" if "?" in BASE_URL else "?"
-                page_url = f"{BASE_URL_FULL}{separator}{PAGINATION_PARAM}{page_num}"
+                 if PAGINATION_PARAM in BASE_URL_FULL:
+                    # заменяем существующий p
+                    page_url = re.sub(
+                        rf"{PAGINATION_PARAM}\d+",
+                        f"{PAGINATION_PARAM}{page_num}",
+                        BASE_URL_FULL
+                    )
+                else:
+                    separator = "&" if "?" in BASE_URL_FULL else "?"
+                    page_url = f"{BASE_URL_FULL}{separator}{PAGINATION_PARAM}{page_num}"
 
-            print(f"Парсинг страницы {page_num} каталога...")
+            print('page_url', page_url)
+            # print('page_number', page_num)
             catalog_driver.get(page_url)
             time.sleep(3.0) # Небольшая пауза после загрузки страницы каталога
             
@@ -718,7 +737,7 @@ def main():
             time.sleep(3.0)
             
             items = parse_cards(catalog_driver)
-            # print('items', items)
+            print('items', items)
             if not items:
                 print(f"На странице {page_num} не найдено товаров. Остановка.")
                 break

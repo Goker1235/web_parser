@@ -14,8 +14,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium_stealth import stealth
 
 # === НАСТРОЙКИ ===================================
-BASE_URL = "https://www.mvideo.ru/smartfony-i-svyaz-10/smartfony-205/f/brand=honor/tolko-v-nalichii=da"
-PAGINATION_PARAM = "page="   # шаблон для добавления номера страницы
+BASE_URL = "https://rostov.cian.ru/newobjects/list?currency=2&deal_type=sale&engine_version=2&maxprice=50000000&offer_type=newobject&region=4606&room3=1"
+PAGINATION_PARAM = "p="   # шаблон для добавления номера страницы
 MAX_PAGES_TO_PARSE = 10000 # Максимальный лимит страниц для безопасности
 OUTPUT_FILE = "flats_stealthV2.json"
 # ==================================================
@@ -61,31 +61,61 @@ def create_driver():
 def find_product_container(driver):
     """
     Автоматическое определение контейнера с товарами и списка карточек.
-    Возвращает tuple: (container, list_of_cards)
+    Возвращает container и список найденных карточек.
     """
-    name_selectors = ["a.title-wrapper", "a.block_name u", "a.dark_link span", "div.item-title span"]
-    price_selectors = ["span.price", "div.price", "div.price_block .price span", "div.price_matrix_block .price span"]
 
+    # Название товара
+    name_selectors = [
+        "div.product-item-title a",
+        "a.product-title__text",
+        "a.title-wrapper",
+        "[class*='title']",
+        "[class*='name']",
 
-    containers = driver.find_elements(By.CSS_SELECTOR, "ul, div")
+        'div[data-name="NewbuildingInfo"] a'
+    ]
+
+    # Цена товара
+    price_selectors = [
+        "div.product-item-price",
+        "div.product-item-price span",
+        ".discount-tag",
+        "span.price", 
+        "div.price",
+
+        'div[data-name="Advertises"] span a'
+    ]
+
+    # Универсальные контейнеры для каталогов
+    containers = driver.find_elements(
+        By.CSS_SELECTOR,
+        "div.row, div.col-*, div[class*='col'], div[class*='product'], section, ul, div.container,  div[data-mark='OffersBody'][data-id='offers_body_container']"
+    )
+    print(containers)
     for c in containers:
         children = c.find_elements(By.XPATH, "./*")
         if len(children) < 2:
             continue
-        # проверяем, есть ли у большинства детей ссылка и цена
+
         matches = 0
         for child in children:
-            if any(child.find_elements(By.CSS_SELECTOR, sel) for sel in name_selectors) and any(child.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors):
+            has_name = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in name_selectors)
+            has_price = any(child.find_elements(By.CSS_SELECTOR, sel) for sel in price_selectors)
+            if has_name and has_price:
                 matches += 1
-        if matches / len(children) > 0.5:
+
+        if matches > 0 and matches / len(children) > 0.4:   # 40% достаточно для Bootstrap-сетки
             return c, children
+
     return None, []
+
 
 
 # --- ФАЗА 1: Сбор ссылок со страницы каталога ---
 def parse_cards(driver):
     """Собирает URL и Название со страницы каталога."""
     container, cards = find_product_container(driver)
+    print(container, cards)
     if not container:
         return []
 
